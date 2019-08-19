@@ -1,0 +1,18 @@
+[
+    {
+      "ParameterKey": "KeyName",
+      "ParameterValue": "keypair"
+    }, 
+    {
+      "ParameterKey": "IPAddressForRDP",
+      "ParameterValue": "0.0.0.0/0"
+    },
+    {
+        "ParameterKey": "S3ScriptLocation",
+        "ParameterValue": "s3://<bucket name>/scripts"
+    },
+    {
+      "ParameterKey": "S3LocationForJarFiles",
+      "ParameterValue": "s3://<bucket name>/jars"
+    }
+]

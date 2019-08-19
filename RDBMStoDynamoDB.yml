@@ -1,0 +1,334 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Template to create resources required to run a glue job
+  to read data from Relational Databaseifjcce to DynamoDB
+Parameters:
+  KeyName:
+    Description: 'Existing Key Name'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+  IPAddressForRDP:
+    Description: The IP address range to allow Remote access into the EC2 instance
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: Valid IP CIDR range of the form x.x.x.x/x.
+  S3ScriptLocation: 
+    Description: "Location for Glue job script"
+    Type: String
+    ConstraintDescription: "S3 location for ETL scipt"
+  S3LocationForJarFiles: 
+    Description: "S3 location for jar files"
+    Type: String
+    ConstraintDescription: "S3 location for jar files"
+Resources:
+  Vpc:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 172.31.0.0/24
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - Vpc
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - InternetGateway
+  AttachGateway:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref Vpc
+      MapPublicIpOnLaunch: 'true'
+      CidrBlock: 172.31.0.0/24
+      AvailabilityZone: 
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - PublicSubnet
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - PublicRouteTable
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref Vpc
+      GroupDescription: Applied to Source EC2 Instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3389'
+          ToPort: '3389'
+          CidrIp: !Ref IPAddressForRDP
+          Description: Allows RDP Access from anywhere 
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - InstanceSecurityGroup
+  SelfReferencingIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: 
+      GroupId: !Ref InstanceSecurityGroup
+      Description: Allow access between security groups.
+      IpProtocol: tcp
+      FromPort: '0'
+      ToPort: '65535'
+      SourceSecurityGroupId: !Ref InstanceSecurityGroup
+  EC2SourceDB:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      InstanceType: m5.large
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - EC2SourceDB
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            DeleteOnTermination: 'true'
+            Iops: '7500'
+            VolumeSize: '150'
+            VolumeType: io1
+      ImageId: ami-77ff9b61
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "glue.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonEC2FullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+        - 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'  
+        - 'arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess'
+        - 'arn:aws:iam::aws:policy/AWSGlueConsoleFullAccess'
+      RoleName: !Join 
+                - '-'
+                - - !Ref 'AWS::StackName'
+                  - GlueConnectionRole
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - '*'
+            Resource:
+              - '*'
+      VpcId: !Ref Vpc
+      ServiceName: !Join 
+        - ''
+        - - com.amazonaws.
+          - !Ref 'AWS::Region'
+          - .s3
+      RouteTableIds: 
+        - !Ref PublicRouteTable
+  DynamoDEndPoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - '*'
+            Resource:
+              - '*'
+      VpcId: !Ref Vpc
+      ServiceName: !Join
+        - ''
+        - - com.amazonaws.
+          - !Ref 'AWS::Region'
+          - .dynamodb
+      RouteTableIds: 
+        - !Ref PublicRouteTable
+  GlueConnectionToSQLServer:
+    Type: AWS::Glue::Connection
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      ConnectionInput:
+        Description: "Connect to SQL server database."
+        Name: GlueConnectionToSQLServer
+        ConnectionType: "JDBC"
+        PhysicalConnectionRequirements:
+          AvailabilityZone: 
+            Fn::Select:
+              - 0
+              - Fn::GetAZs: ""
+          SecurityGroupIdList:
+            - !Ref InstanceSecurityGroup
+          SubnetId: !Ref PublicSubnet
+        ConnectionProperties: 
+          "USERNAME": awssct
+          "PASSWORD": Password1
+          "JDBC_ENFORCE_SSL" : "false"
+          "JDBC_CONNECTION_URL": !Sub
+            - jdbc:sqlserver://${IpAddress}:1433;databaseName=dms_sample
+            - { IpAddress: !GetAtt EC2SourceDB.PrivateDnsName }
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      DatabaseInput: 
+        Name: gluedatabase
+      CatalogId: !Ref AWS::AccountId
+  GlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Role: !GetAtt GlueRole.Arn
+      Description: "Used to crawl the database for metadata"
+      DatabaseName: !Ref GlueDatabase
+      Targets: 
+        JdbcTargets:
+          - ConnectionName: !Ref GlueConnectionToSQLServer
+            Path: "dms_sample/dbo/%"
+      TablePrefix: "Crawler_ss_" 
+      Name: GlueCrawlerForSqlServer
+  DynamoDBTicketSaleTable:
+    Type: AWS::DynamoDB::Table
+    Properties :
+      AttributeDefinitions:
+        - AttributeName : sporting_event_ticket_id
+          AttributeType : N
+        - AttributeName : ticket_status_owner
+          AttributeType : S
+      KeySchema : 
+        - AttributeName : sporting_event_ticket_id
+          KeyType : HASH
+        - AttributeName : ticket_status_owner
+          KeyType : RANGE
+      ProvisionedThroughput : 
+        ReadCapacityUnits : 50
+        WriteCapacityUnits : 50
+      TableName : ticket_sales
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - Vpc
+  DynamoDBConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties : 
+      AttributeDefinitions:
+        - AttributeName : data_type
+          AttributeType : S
+        - AttributeName : data_id
+          AttributeType : S
+      KeySchema : 
+        - AttributeName : data_type
+          KeyType : HASH
+        - AttributeName : data_id
+          KeyType : RANGE
+      ProvisionedThroughput : 
+        ReadCapacityUnits : 50
+        WriteCapacityUnits : 50
+      TableName : config
+      Tags:
+        - Key: Name
+          Value: !Join 
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - Vpc
+  GlueTicketSaleJob: 
+    Type: AWS::Glue::Job
+    Properties:
+      Command: 
+        Name:  glueetl
+        ScriptLocation: !Join [ /, [ !Ref S3ScriptLocation, ticketsale.scala ] ]
+      Connections: 
+        Connections:
+          - !Ref GlueConnectionToSQLServer
+      ExecutionProperty:
+        MaxConcurrentRuns: 2
+      MaxRetries: 0
+      DefaultArguments: 
+        "--job-language": "scala"
+        "--extra-jars": !Join [ ',', [ !Join [ '/', [ !Ref S3LocationForJarFiles,'emr-dynamodb-hadoop-4.12.0-SNAPSHOT.jar' ] ], !Join [ '/', [ !Ref S3LocationForJarFiles,'emr-dynamodb-hive-4.12.0-SNAPSHOT-jar-with-dependencies.jar' ] ]] ]
+        "--job-bookmark-option": "job-bookmark-disable"
+        "--class": "GlueWriteToDynamoDB"
+      Name: GlueTicketSaleJob
+      Role: !GetAtt GlueRole.Arn
+      Description: "Glue job that combines ticket sale Data from SQL Server and writes to DynamoDB"
+  GlueConfigJob: 
+    Type: AWS::Glue::Job
+    Properties:
+      Command: 
+        Name:  glueetl
+        ScriptLocation: !Join [ /, [ !Ref S3ScriptLocation, config.scala ] ]
+      Connections: 
+        Connections:
+          - !Ref GlueConnectionToSQLServer
+      ExecutionProperty:
+        MaxConcurrentRuns: 2
+      MaxRetries: 0
+      DefaultArguments: 
+        "--job-language": "scala"
+        "--extra-jars": !Join [ ',', [ !Join [ '/', [ !Ref S3LocationForJarFiles,'emr-dynamodb-hadoop-4.12.0-SNAPSHOT.jar' ] ], !Join [ '/', [ !Ref S3LocationForJarFiles,'emr-dynamodb-hive-4.12.0-SNAPSHOT-jar-with-dependencies.jar' ] ]] ]
+        "--job-bookmark-option": "job-bookmark-disable"
+        "--class": "GlueWriteToDynamoDB"
+      Name: GlueConfigJob
+      Role: !GetAtt GlueRole.Arn
+      Description: "Glue job to write config to DynamoDB"
+Outputs:
+  PublicIPOfEC2InstanceWithSQLServer:
+    Description: The Public IP of EC2 instance that has SQL Server installed
+    Value: !GetAtt EC2SourceDB.PublicIp
+  EC2InstanceID:
+    Description: Instance ID 
+    Value: !Ref EC2SourceDB
