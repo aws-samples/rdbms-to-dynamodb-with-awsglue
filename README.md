@@ -15,7 +15,7 @@ Once cloning is complete navigate to the root directory and build the repository
 mvn clean install
 ```
 
-Upload the jar files from emr-dynamodb-connector/emr-dynamodb-hadoop/target/emr-dynamodb-hadoop-x.y.z-SNAPSHOT.jar and emr-dynamodb-connector/emr-dynamodb-hive/target/emr-dynamodb-hive-x.y.z-SNAPSHOT-jar-with-dependencies.jar to s3://<Bucket name>/jars
+Upload the jar files from emr-dynamodb-connector/emr-dynamodb-hadoop/target/emr-dynamodb-hadoop-x.y.z-SNAPSHOT.jar and emr-dynamodb-connector/emr-dynamodb-hive/target/emr-dynamodb-hive-x.y.z-SNAPSHOT-jar-with-dependencies.jar to s3://`<bucket Name`>/jars
 
 ## License Summary
 
